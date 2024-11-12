@@ -15,10 +15,20 @@ const firebaseConfig = {
   measurementId: process.env.FIREBASE_MEASURENMENT_ID,
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+// Initialize Firebase only once
+let app;
+let db;
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch (error) {
+  if (!/already exists/.test(error.message)) {
+    logger.error('Firebase initialization error', { error: error.message });
+  }
+}
 
-let snap = new Midtrans.Snap({
+// Initialize Midtrans only once
+const snap = new Midtrans.Snap({
   isProduction: false,
   serverKey: process.env.SECRET,
   clientKey: process.env.NEXT_PUBLIC_CLIENT,
@@ -26,26 +36,61 @@ let snap = new Midtrans.Snap({
 
 export async function POST(request) {
   try {
-    const body = await request.json();
+    // Validate request content type
+    const contentType = request.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      await logger.error('Invalid content type', { contentType });
+      return NextResponse.json(
+        { status: 'error', message: 'Invalid content type' },
+        { status: 400 },
+      );
+    }
+
+    // Get request body and validate
+    const rawBody = await request.text();
+    if (!rawBody) {
+      await logger.error('Empty request body');
+      return NextResponse.json(
+        { status: 'error', message: 'Empty request body' },
+        { status: 400 },
+      );
+    }
+
+    // Parse JSON body
+    let body;
+    try {
+      body = JSON.parse(rawBody);
+    } catch (error) {
+      await logger.error('Invalid JSON body', {
+        error: error.message,
+        rawBody,
+      });
+      return NextResponse.json(
+        { status: 'error', message: 'Invalid JSON format' },
+        { status: 400 },
+      );
+    }
+
+    // Log the incoming webhook
     await logger.info('Received webhook notification', {
       orderId: body.order_id,
-      timestamp: new Date().toISOString(),
+      transactionStatus: body.transaction_status,
     });
 
     // Verify notification signature
-    const signatureKey = process.env.SECRET;
     const notification = new Midtrans.CoreApi({
       isProduction: false,
-      serverKey: signatureKey,
+      serverKey: process.env.SECRET,
       clientKey: process.env.NEXT_PUBLIC_CLIENT,
     });
 
     try {
       const notificationJson =
         await notification.transaction.notification(body);
-      await logger.info('Notification verification successful', {
-        notificationData: notificationJson,
-      });
+
+      if (!notificationJson || !notificationJson.order_id) {
+        throw new Error('Invalid notification response');
+      }
 
       const orderId = notificationJson.order_id;
       const transactionStatus = notificationJson.transaction_status;
@@ -71,49 +116,62 @@ export async function POST(request) {
         paymentStatus = 'pending';
       }
 
-      await logger.transaction('Processing payment status update', {
-        orderId,
-        oldStatus: transactionStatus,
-        newStatus: paymentStatus,
-        fraudStatus,
-      });
+      // Validate orderId before updating Firestore
+      if (!orderId || typeof orderId !== 'string') {
+        throw new Error('Invalid order ID');
+      }
 
-      // Update Firestore
-      const orderRef = doc(db, 'order', orderId);
-      await updateDoc(orderRef, {
-        PaymentStatus: paymentStatus,
-      });
+      // Update Firestore with retries
+      const maxRetries = 3;
+      let lastError = null;
 
-      await logger.info('Payment status updated successfully', {
-        orderId,
-        paymentStatus,
-        timestamp: new Date().toISOString(),
-      });
+      for (let i = 0; i < maxRetries; i++) {
+        try {
+          const orderRef = doc(db, 'order', orderId);
+          await updateDoc(orderRef, {
+            PaymentStatus: paymentStatus,
+          });
 
-      return NextResponse.json(
-        {
-          status: 'success',
-          message: 'Payment status updated successfully',
-        },
-        {
-          status: 200,
-        },
-      );
+          await logger.info('Payment status updated successfully', {
+            orderId,
+            paymentStatus,
+            attempt: i + 1,
+          });
+
+          return NextResponse.json(
+            {
+              status: 'success',
+              message: 'Payment status updated successfully',
+            },
+            { status: 200 },
+          );
+        } catch (error) {
+          lastError = error;
+          await logger.warning(`Retry attempt ${i + 1} failed`, {
+            error: error.message,
+            orderId,
+          });
+
+          if (i < maxRetries - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000 * (i + 1)));
+          }
+        }
+      }
+
+      // If all retries failed
+      throw lastError || new Error('Failed to update payment status');
     } catch (error) {
       await logger.error('Error processing notification', {
         error: error.message,
-        stack: error.stack,
         body: body,
       });
 
       return NextResponse.json(
         {
           status: 'error',
-          message: 'Invalid notification signature',
+          message: 'Error processing notification',
         },
-        {
-          status: 403,
-        },
+        { status: 403 },
       );
     }
   } catch (error) {
@@ -127,9 +185,7 @@ export async function POST(request) {
         status: 'error',
         message: 'Internal server error',
       },
-      {
-        status: 500,
-      },
+      { status: 500 },
     );
   }
 }

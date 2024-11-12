@@ -5,52 +5,57 @@ import { format } from 'date-fns';
 
 class Logger {
   constructor() {
-    this.logDir = path.join(process.cwd(), 'logs');
-    this.paymentLogFile = 'payment.log';
-    this.ensureLogDirectoryExists();
-  }
-
-  ensureLogDirectoryExists() {
-    if (!fs.existsSync(this.logDir)) {
-      fs.mkdirSync(this.logDir);
-    }
+    this.isProduction = process.env.NODE_ENV === 'production';
   }
 
   formatMessage(level, message, data = null) {
-    const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-    let logMessage = `[${timestamp}] [${level}] ${message}`;
-    
-    if (data) {
-      logMessage += `\nData: ${JSON.stringify(data, null, 2)}`;
-    }
-    
-    return logMessage + '\n' + '-'.repeat(80) + '\n';
+    const timestamp = new Date().toISOString();
+    const logObject = {
+      timestamp,
+      level,
+      message,
+      data: data || {},
+    };
+
+    return JSON.stringify(logObject);
   }
 
   async writeLog(level, message, data = null) {
-    try {
-      const logFile = path.join(this.logDir, this.paymentLogFile);
-      const logMessage = this.formatMessage(level, message, data);
-      
-      await fs.promises.appendFile(logFile, logMessage, 'utf8');
-    } catch (error) {
-      console.error('Error writing to log file:', error);
+    const logMessage = this.formatMessage(level, message, data);
+
+    if (this.isProduction) {
+      // In production (Vercel), just use console methods
+      // These will be captured by Vercel's logging system
+      switch (level) {
+        case 'ERROR':
+          console.error(logMessage);
+          break;
+        case 'WARNING':
+          console.warn(logMessage);
+          break;
+        default:
+          console.log(logMessage);
+      }
+    } else {
+      // In development, you can still use console or implement file-based logging
+      console.log(logMessage);
     }
   }
 
   async info(message, data = null) {
     await this.writeLog('INFO', message, data);
-    console.log(message, data); // Keep console.log for development
   }
 
   async error(message, data = null) {
     await this.writeLog('ERROR', message, data);
-    console.error(message, data); // Keep console.error for development
+  }
+
+  async warning(message, data = null) {
+    await this.writeLog('WARNING', message, data);
   }
 
   async transaction(message, data = null) {
     await this.writeLog('TRANSACTION', message, data);
-    console.log(message, data); // Keep console.log for development
   }
 }
 
