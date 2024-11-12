@@ -1,7 +1,5 @@
 import Midtrans from 'midtrans-client';
 import { NextResponse } from 'next/server';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, updateDoc } from 'firebase/firestore';
 import { logger } from '../../utils/logger';
 
 // check payment status
@@ -55,6 +53,7 @@ export async function GET(request) {
       {
         status: 'error',
         message: 'Internal server error',
+        stack: error.stack,
       },
       { status: 500 },
     );
