@@ -8,26 +8,53 @@ let snap = new Midtrans.Snap({
 });
 
 export async function POST(request) {
-  const { order_id, gross_amount, idPacket } = await request.json();
+  const { order_id, gross_amount, idPacket, items, customer_details } =
+    await request.json();
 
-  let parameter = {
+  const parameter = {
     transaction_details: {
-      order_id,
-      idPacket,
-      gross_amount,
+      order_id: order_id,
+      gross_amount: gross_amount,
+    },
+    credit_card: {
+      secure: true,
+    },
+    item_details: Array.isArray(items)
+      ? items.map((item) => {
+          return {
+            id: item.id,
+            price: item.price,
+            quantity: item.quantity,
+            name: item.name,
+          };
+        })
+      : {
+          id: items.id,
+          price: items.price,
+          quantity: items.quantity,
+          name: items.name,
+        },
+    customer_details: {
+      first_name: customer_details.first_name,
+      last_name: customer_details.last_name,
+      email: customer_details.email,
+      phone: customer_details.phone,
     },
   };
 
   try {
-    // Get token to midtrans via snap
-    const token = await snap.createTransactionToken(parameter);
-    console.log(token);
-
-    // return token
-    return NextResponse.json({ token });
-  } catch (error) {
-    return NextResponse.error('Failed to create transaction token', {
-      status: 500,
+    const transaction = await snap.createTransaction(parameter);
+    return NextResponse.json({
+      status: 'success',
+      transactionId: transaction.transaction_id,
+      token: transaction.token,
+      redirect_url: transaction.redirect_url,
     });
+  } catch (error) {
+    console.log(error.message);
+    return NextResponse.json(
+      { error: 'Failed to create transaction token' },
+      { status: 500 },
+    );
   }
 }
