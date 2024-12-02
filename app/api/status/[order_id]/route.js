@@ -1,11 +1,10 @@
 import Midtrans from 'midtrans-client';
 import { NextResponse } from 'next/server';
-import { logger } from '../../utils/logger';
+import { logger } from '../../../utils/logger';
 
-
-export async function GET(request) {
+export async function GET(request, { params }) {
   try {
-    const orderId = req.params.order_id;
+    const orderId = params.order_id;
 
     const coreApi = new Midtrans.CoreApi({
       isProduction: false,
