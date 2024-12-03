@@ -1,7 +1,4 @@
-{
-  "schemaVersion": 2,
-  "templateId": "node/18",
-  "buildScripts": {
-    "build": "npm run build"
-  }
-}
+   {
+     "schemaVersion": 2,
+     "dockerfilePath": "./Dockerfile"
+   }
